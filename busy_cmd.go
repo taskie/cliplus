@@ -2,51 +2,63 @@ package cliplus
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 )
 
+var defaultNoArgsMainFunc = func() {
+	_, _ = fmt.Fprintln(os.Stderr, "please specify subcommand")
+	os.Exit(1)
+}
+
 type BusyCmd struct {
-	ResolverMap map[string]func()
-	Resolver    func(name string) func()
+	Name           string
+	MainResolver   MainResolver
+	NoArgsMainFunc func()
 }
 
-func NewBusyCmd(selfName string) *BusyCmd {
-	resolverMap := make(map[string]func())
-	busyCmd := &BusyCmd{
-		ResolverMap: resolverMap,
+func NewBusyCmd(name string, resolver MainResolver) *BusyCmd {
+	return &BusyCmd{
+		Name:           name,
+		MainResolver:   resolver,
+		NoArgsMainFunc: defaultNoArgsMainFunc,
 	}
-	resolverMap[selfName] = func() { busyCmd.Main() }
-	return busyCmd
 }
 
-func (busyCmd *BusyCmd) Resolve(name string) func() {
-	if busyCmd.Resolver != nil {
-		return busyCmd.Resolver(name)
+func (cmd *BusyCmd) run(name string, arg ...string) error {
+	if name == cmd.Name {
+		if len(arg) == 0 {
+			cmd.NoArgsMainFunc()
+			return nil
+		}
+		os.Args = arg
+		cmd.Main()
+		return nil
 	}
-	return busyCmd.ResolverMap[name]
-}
-
-func (busyCmd *BusyCmd) Run(name string) error {
-	cmd := busyCmd.Resolve(name)
-	if cmd == nil {
-		return fmt.Errorf("command not found: %s", name)
+	main, err := cmd.MainResolver.ResolveMain(name)
+	if err != nil {
+		return err
 	}
-	cmd()
+	if main == nil {
+		return fmt.Errorf("not found: %s", name)
+	}
+	main()
 	return nil
 }
 
-func (busyCmd *BusyCmd) Main() {
-	name := filepath.Base(os.Args[0])
-	os.Args = os.Args[1:]
+func (cmd *BusyCmd) Main() {
 	if len(os.Args) == 0 {
-		log.Println("please specify subcommand")
+		_, _ = fmt.Fprintln(os.Stderr, "invalid state: $0 is not specified")
 		os.Exit(1)
 	}
-	err := busyCmd.Run(name)
+	name := filepath.Base(os.Args[0])
+	err := cmd.run(name, os.Args[1:]...)
 	if err != nil {
-		log.Println(err)
+		_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(127)
 	}
+}
+
+func (cmd *BusyCmd) GenerateMain() func() {
+	return func() { cmd.Main() }
 }
